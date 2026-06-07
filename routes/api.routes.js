@@ -9,7 +9,6 @@ router.use("/categories", require("./user/category.routes"));
 router.use("/provider", require("./user/provider.routes"));
 router.use("/profile", require("./user/profile.routes"));
 router.use("/users", require("./user/notification.routes"));
-router.use("/chat", require("./chat.routes"));
 
 router.post("/test-notification", async (req, res) => {
   try {

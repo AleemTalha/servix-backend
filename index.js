@@ -1,12 +1,10 @@
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
-const http = require("http");
 require("dotenv").config();
 
 const morgan = require("morgan");
 const cors = require("cors");
-const { Server } = require("socket.io");
 
 const connectDB = require("./config/db");
 const { connectRedis } = require("./config/redis");
@@ -14,10 +12,7 @@ const { connectRedis } = require("./config/redis");
 const serviceAccount = require("./firebase-admin-servix.json");
 const admin = require("firebase-admin");
 
-const initializeSocket = require("./sockets/chat.socket");
-
 const app = express();
-const server = http.createServer(app);
 
 const corsOptions = {
   origin: "*",
@@ -28,14 +23,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
 app.use(morgan("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -103,11 +90,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-initializeSocket(io);
-
 const port = process.env.PORT || 8080;
 
-server.listen(port, async () => {
+app.listen(port, async () => {
   try {
     await connectDB();
     await connectRedis();

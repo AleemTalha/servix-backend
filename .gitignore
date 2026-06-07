@@ -1,0 +1,5 @@
+node_modules/
+uploads/
+.env
+firebase-admin-servix.json
+eng.traineddata
