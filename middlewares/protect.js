@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { redisClient } = require("../config/redis");
+const logger = require("../utils/logger");
 
 const logAuthEvent = (req, status, message, extra = {}) => {
   const logData = {
@@ -16,8 +17,10 @@ const logAuthEvent = (req, status, message, extra = {}) => {
 
   if (status >= 500) {
     console.error(JSON.stringify(logData));
+    logger.error(message, { ip: req.ip, ...extra, type: "auth" });
   } else {
     console.warn(JSON.stringify(logData));
+    logger.warn(message, { ip: req.ip, ...extra, type: "auth" });
   }
 };
 

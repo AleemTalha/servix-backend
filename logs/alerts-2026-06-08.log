@@ -1,0 +1,3 @@
+{"timestamp":"2026-06-08T20:42:31.794Z","level":"warn","message":"Missing or invalid authorization header","ip":"::1","type":"auth"}
+{"timestamp":"2026-06-08T20:43:15.406Z","level":"warn","message":"Missing or invalid authorization header","ip":"::1","type":"auth"}
+{"timestamp":"2026-06-08T20:48:07.703Z","level":"warn","message":"Missing or invalid authorization header","ip":"::1","type":"auth"}

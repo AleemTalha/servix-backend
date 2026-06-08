@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const User = require("../../models/user.models");
 const { redisClient } = require("../../config/redis");
+const logger = require("../../utils/logger");
 
 const SENSITIVE_FIELDS = "-password -emailHash -fcmToken -loginHistory -verificationDocuments";
 
@@ -11,12 +12,14 @@ router.get("/", async (req, res) => {
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    let filter = { role: { $ne: "admin" } };
+    let filter = {};
 
     if (category === "customers") {
       filter.role = "user";
     } else if (category === "providers") {
       filter.role = "provider";
+    } else if (category === "admin") {
+      filter.role = "admin";
     }
 
     let query = User.find(filter)
@@ -53,10 +56,7 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const user = await User.findOne({
-      _id: req.params.id,
-      role: { $ne: "admin" },
-    })
+    const user = await User.findById(req.params.id)
       .populate("providerProfile.categories", "name")
       .select(SENSITIVE_FIELDS);
 
@@ -82,15 +82,19 @@ router.get("/:id", async (req, res) => {
 
 router.patch("/:id/block", async (req, res) => {
   try {
-    const user = await User.findOne({
-      _id: req.params.id,
-      role: { $ne: "admin" },
-    });
+    const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found",
+      });
+    }
+
+    if (user.role === "admin") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot block another admin account",
       });
     }
 
@@ -105,6 +109,61 @@ router.patch("/:id/block", async (req, res) => {
     await user.save();
 
     await redisClient.del(`session:${user._id}`);
+
+    logger.block(
+      `Admin blocked user ${user.email}`,
+      req.ip,
+      req.user.id,
+      user._id,
+    );
+
+    const admin = require("../config/firebase");
+    const Notification = require("../models/notification.models");
+
+    const notificationTitle = "Account Blocked";
+    const notificationBody =
+      "Your session has expired and your account has been blocked. Please contact support.";
+
+    if (user.fcmToken && user.fcmToken.length > 0) {
+      const payload = {
+        notification: { title: notificationTitle, body: notificationBody },
+        data: { type: "account_blocked", screen: "/profile" },
+        android: {
+          priority: "high",
+          notification: { channelId: "servix_action_channel" },
+        },
+        apns: {
+          payload: {
+            aps: { sound: "default", contentAvailable: true },
+          },
+        },
+      };
+
+      await Promise.allSettled([
+        Notification.create({
+          title: notificationTitle,
+          description: notificationBody,
+          recipient: user._id,
+        }),
+        ...user.fcmToken.map((token) =>
+          admin
+            .messaging()
+            .send({ ...payload, token })
+            .catch((err) => {
+              console.error(
+                `FCM send failed for token ${token.slice(-8)}:`,
+                err.message,
+              );
+            }),
+        ),
+      ]);
+    } else {
+      await Notification.create({
+        title: notificationTitle,
+        description: notificationBody,
+        recipient: user._id,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -121,10 +180,7 @@ router.patch("/:id/block", async (req, res) => {
 
 router.patch("/:id/unblock", async (req, res) => {
   try {
-    const user = await User.findOne({
-      _id: req.params.id,
-      role: { $ne: "admin" },
-    });
+    const user = await User.findById(req.params.id);
 
     if (!user) {
       return res.status(404).json({
@@ -142,6 +198,13 @@ router.patch("/:id/unblock", async (req, res) => {
 
     user.isBlocked = false;
     await user.save();
+
+    logger.info(`Admin unblocked user ${user.email}`, {
+      type: "block",
+      ip: req.ip,
+      adminId: req.user.id,
+      targetId: user._id,
+    });
 
     return res.status(200).json({
       success: true,

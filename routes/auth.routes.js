@@ -8,6 +8,7 @@ const protect = require("../middlewares/protect");
 const { sendOtpEmail } = require("../utils/mail");
 const { generateOtp, hashOtp, verifyOtp } = require("../utils/otp");
 const { hashEmail } = require("../utils/encryption");
+const logger = require("../utils/logger");
 
 const OTP_TTL = 60 * 10;
 const OTP_RATE_LIMIT_TTL = 60;
@@ -128,6 +129,8 @@ router.post("/verify-otp", async (req, res) => {
 
     await newUser.save();
 
+    logger.signup(`New user registered: ${email}`, req.ip, newUser._id);
+
     await redisClient.del(pendingKey(email));
     await redisClient.del(rateLimitKey(email));
 
@@ -223,6 +226,8 @@ router.post("/login", async (req, res) => {
     const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "Unknown";
     const userAgent = req.headers["user-agent"] || "Unknown";
     const now = new Date().toISOString();
+
+    logger.auth(`User logged in: ${email}`, ip, user._id);
 
     user.loginHistory.push({
       ipAddress: ip,
