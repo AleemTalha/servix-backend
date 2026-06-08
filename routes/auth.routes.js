@@ -305,6 +305,37 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.get("/sync", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(401).json({ valid: false, message: "User not found" });
+    }
+
+    let providerStatus = null;
+    if (user.role === "provider") {
+      providerStatus = user.providerProfile?.verified ? "approved" : "pending";
+    }
+
+    return res.status(200).json({
+      valid: true,
+      user: {
+        id: user._id,
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        profileImage: user.profileImage?.url || null,
+        ...(user.role === "provider" && { providerStatus }),
+      },
+    });
+  } catch (err) {
+    console.error("[sync]", err);
+    return res.status(500).json({ valid: false, message: "Internal Server Error" });
+  }
+});
+
 router.post("/logout", protect, async (req, res) => {
   try {
     const userId = req.user.id;

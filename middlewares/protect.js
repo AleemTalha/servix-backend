@@ -115,6 +115,16 @@ const protect = async (req, res, next) => {
       );
     }
 
+    const User = require("../models/user.models");
+    const user = await User.findById(decoded.id).select("isBlocked");
+
+    if (user && user.isBlocked) {
+      await redisClient.del(sessionKey);
+      return res.status(403).json({
+        message: "Account is blocked. Contact support.",
+      });
+    }
+
     req.user = {
       id: decoded.id,
       email: decoded.email,

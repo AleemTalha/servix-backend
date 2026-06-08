@@ -72,6 +72,7 @@ const userSchema = new mongoose.Schema(
         authProvider: { type: String },
       },
     ],
+    isBlocked: { type: Boolean, default: false },
     isVerified: { type: Boolean, default: false },
     verificationDocuments: [
       {
