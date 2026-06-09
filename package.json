@@ -33,6 +33,7 @@
     "passport-facebook": "^3.0.0",
     "passport-google-oauth20": "^2.0.0",
     "redis": "^5.12.1",
+    "socket.io": "^4.8.3",
     "tesseract.js": "^7.0.0",
     "uuid": "^14.0.0",
     "zod": "^4.4.3"

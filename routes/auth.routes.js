@@ -9,6 +9,7 @@ const { sendOtpEmail } = require("../utils/mail");
 const { generateOtp, hashOtp, verifyOtp } = require("../utils/otp");
 const { hashEmail } = require("../utils/encryption");
 const logger = require("../utils/logger");
+const admin = require("../config/firebase");
 
 const OTP_TTL = 60 * 10;
 const OTP_RATE_LIMIT_TTL = 60;
@@ -378,6 +379,140 @@ router.post("/logout", protect, async (req, res) => {
   } catch (err) {
     console.error("[logout]", err);
     return res.status(200).json({ success: true, message: "Logged out successfully" });
+  }
+});
+
+router.post("/google", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({ message: "Firebase ID token is required" });
+    }
+
+    let firebaseUser;
+    try {
+      firebaseUser = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      return res.status(401).json({ message: "Invalid Firebase token" });
+    }
+
+    const { email, name, picture, uid } = firebaseUser;
+    if (!email) {
+      return res.status(400).json({ message: "Email not found in Google account" });
+    }
+
+    const hashedEmailField = hashEmail(email);
+    let user = await User.findOne({ emailHash: hashedEmailField });
+
+    if (user && user.isBlocked) {
+      return res.status(403).json({ message: "Account is blocked. Contact support." });
+    }
+
+    if (!user) {
+      const nameParts = (name || "User").split(" ");
+      const firstName = nameParts[0] || "User";
+      const lastName = nameParts.slice(1).join(" ") || "";
+
+      user = new User({
+        firstName,
+        lastName,
+        email,
+        emailHash: hashedEmailField,
+        googleId: uid,
+        authProvider: "google",
+        authMethods: { local: false, google: true, facebook: false },
+        profileImage: { url: picture || "/uploads/profile.png" },
+        isVerified: true,
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+      });
+
+      await user.save();
+      logger.signup(`New Google user: ${email}`, req.ip, user._id);
+    } else {
+      if (!user.authMethods.google) {
+        user.authMethods.google = true;
+        user.googleId = uid;
+        await user.save();
+      }
+    }
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    const incomingDeviceId = req.headers["x-device-id"];
+    const deviceName = req.headers["x-device-name"] || "Unknown Device";
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "Unknown";
+    const userAgent = req.headers["user-agent"] || "Unknown";
+    const now = new Date().toISOString();
+
+    logger.auth(`Google login: ${email}`, ip, user._id);
+
+    user.loginHistory.push({ ipAddress: ip, authProvider: "google" });
+    await user.save();
+
+    const existingRaw = await redisClient.get(sessionKey(user._id));
+    let session = existingRaw ? JSON.parse(existingRaw) : null;
+    let activeDeviceId;
+
+    if (session) {
+      if (!Array.isArray(session.devices)) session.devices = [];
+      const matchIdx = incomingDeviceId
+        ? session.devices.findIndex((d) => d.deviceId === incomingDeviceId)
+        : -1;
+
+      if (matchIdx !== -1) {
+        session.devices[matchIdx].lastActive = now;
+        session.devices[matchIdx].loginAt = now;
+        session.devices[matchIdx].deviceName = deviceName;
+        activeDeviceId = session.devices[matchIdx].deviceId;
+      } else {
+        activeDeviceId = incomingDeviceId || uuidv4();
+        session.devices.push({ deviceId: activeDeviceId, deviceName, ip, userAgent, lastActive: now, loginAt: now });
+      }
+      session.role = user.role;
+      session.name = `${user.firstName} ${user.lastName}`;
+    } else {
+      activeDeviceId = incomingDeviceId || uuidv4();
+      session = {
+        userId: user._id.toString(),
+        email: user.email,
+        name: `${user.firstName} ${user.lastName}`,
+        role: user.role,
+        loginAt: now,
+        devices: [{ deviceId: activeDeviceId, deviceName, ip, userAgent, lastActive: now, loginAt: now }],
+      };
+    }
+
+    await redisClient.set(sessionKey(user._id), JSON.stringify(session), { EX: SESSION_TTL });
+
+    let providerStatus = null;
+    if (user.role === "provider") {
+      providerStatus = user.providerProfile?.verified ? "approved" : "pending";
+    }
+
+    return res.status(200).json({
+      message: "Login successful",
+      token,
+      deviceId: activeDeviceId,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+        profileImage: user.profileImage?.url || null,
+        ...(user.role === "provider" && { providerStatus }),
+      },
+    });
+  } catch (err) {
+    console.error("[google-auth]", err);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 });
 

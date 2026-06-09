@@ -8,5 +8,6 @@ router.use("/applications", protect, isAdmin, require("./admin/applications.rout
 router.use("/users",        protect, isAdmin, require("./admin/users.routes"));
 router.use("/auth",         require("./admin/auth.routes"));
 router.use("/dashboard",    protect, isAdmin, require("./admin/dashboard.routes"));
+router.use("/ads",          protect, isAdmin, require("./admin/ads.routes"));
 
 module.exports = router;

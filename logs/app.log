@@ -1,0 +1,6 @@
+{"timestamp":"2026-06-09T01:44:49.753Z","level":"info","category":"general","message":"Server started","port":"8080","env":"development"}
+{"timestamp":"2026-06-09T01:48:32.330Z","level":"info","category":"request","message":"GET /health 200","method":"GET","url":"/health","status":200,"duration":"2ms","ip":"::1","userAgent":"curl/8.7.1","deviceId":null,"userId":null,"contentType":null,"referer":null}
+{"timestamp":"2026-06-09T01:52:29.239Z","level":"info","category":"general","message":"Server started","port":"8080","env":"development"}
+{"timestamp":"2026-06-09T02:04:03.090Z","level":"info","category":"general","message":"Server started","port":"8080","env":"development"}
+{"timestamp":"2026-06-09T02:05:12.218Z","level":"info","category":"general","message":"Server started","port":"8080","env":"development"}
+{"timestamp":"2026-06-09T02:05:21.930Z","level":"info","category":"general","message":"Server started","port":"8080","env":"development"}

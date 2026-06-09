@@ -7,17 +7,19 @@ const adSchema = new mongoose.Schema({
     url: { type: String },
     publicId: { type: String },
   },
-  imagePosition: {
-    enum: ["left", "right"],
-    default: "right",
-  },
   link: { type: String },
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: true,
   },
-});
+  status: {
+    type: String,
+    enum: ["pending", "approved", "rejected"],
+    default: "pending",
+  },
+  isActive: { type: Boolean, default: true },
+}, { timestamps: true });
 
-const Ad = mongoose.model("Ad", adsSchema);
+const Ad = mongoose.model("Ad", adSchema);
 module.exports = Ad;
