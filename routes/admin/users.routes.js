@@ -117,8 +117,8 @@ router.patch("/:id/block", async (req, res) => {
       user._id,
     );
 
-    const admin = require("../config/firebase");
-    const Notification = require("../models/notification.models");
+    const admin = require("../../config/firebase");
+    const Notification = require("../../models/notification.models");
 
     const notificationTitle = "Account Blocked";
     const notificationBody =

@@ -26,7 +26,7 @@ const applicationSchema = new mongoose.Schema(
       categories: [
         {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "Category",
+          ref: "serviceCategory",
         },
       ],
       bio: {

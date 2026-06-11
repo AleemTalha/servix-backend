@@ -220,6 +220,8 @@ io.on("connection", (socket) => {
   });
 });
 
+module.exports = { app, server };
+
 const port = process.env.PORT || 8080;
 
 server.listen(port, async () => {
@@ -228,16 +230,16 @@ server.listen(port, async () => {
     await connectRedis();
 
     logger.info("Server started", { port, env: process.env.NODE_ENV || "development" });
-    console.log(`Server is running on port ${port}`);
-    console.log(`Socket.IO ready on port ${port}`);
-    console.log(`Logging to: ${path.join(__dirname, "logs")}`);
-  } catch (error) {
-    logger.errorLog({
-      type: "startup_error",
-      error: error.message,
-      stack: error.stack,
-    });
-    console.error("Error starting server:", error);
-    process.exit(1);
-  }
-});
+      console.log(`Server is running on port ${port}`);
+      console.log(`Socket.IO ready on port ${port}`);
+      console.log(`Logging to: ${path.join(__dirname, "logs")}`);
+    } catch (error) {
+      logger.errorLog({
+        type: "startup_error",
+        error: error.message,
+        stack: error.stack,
+      });
+      console.error("Error starting server:", error);
+      process.exit(1);
+    }
+  });

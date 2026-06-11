@@ -74,7 +74,7 @@ router.put("/update", protect, async (req, res) => {
     if (lastName) user.lastName = lastName;
     if (contact) user.contact = contact;
 
-    if (user.role === "provider") {
+    if (user.role === "provider" || bio || hourlyRate || experienceYears || location) {
       if (!user.providerProfile) user.providerProfile = {};
 
       if (bio !== undefined) user.providerProfile.bio = bio;
@@ -109,10 +109,23 @@ router.put("/update", protect, async (req, res) => {
       .select("-password")
       .populate("providerProfile.categories");
 
+    let profileImageUrl = "/uploads/profile.png";
+    if (updatedUser.verificationDocuments && updatedUser.verificationDocuments.length > 0) {
+      profileImageUrl = updatedUser.verificationDocuments[0].url;
+    }
+
     return res.status(200).json({
       success: true,
-      message: "Profile updated successfully",
-      user: updatedUser,
+      user: {
+        id: updatedUser._id,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        email: updatedUser.email,
+        contact: updatedUser.contact,
+        bio: updatedUser.providerProfile?.bio || "",
+        role: updatedUser.role,
+        profileImageUrl: profileImageUrl,
+      },
     });
   } catch (err) {
     console.error("Error updating profile fields:", err);
@@ -188,5 +201,31 @@ router.put(
     }
   }
 );
+
+router.get("/login-history", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("loginHistory");
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const history = user.loginHistory
+      .sort((a, b) => b.date - a.date)
+      .map(entry => ({
+        ipAddress: entry.ipAddress || "Unknown",
+        timestamp: entry.date,
+        provider: entry.authProvider === 'local' ? 'Password' : 'Google',
+        status: "success" // Assuming existing history entries are successful logins
+      }));
+
+    return res.status(200).json({
+      success: true,
+      history: history,
+    });
+  } catch (err) {
+    console.error("Error fetching login history:", err);
+    return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+});
 
 module.exports = router;

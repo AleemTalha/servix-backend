@@ -362,5 +362,33 @@ router.get("/status", protect, async (req, res) => {
     }
   }
 });
+// ✨ GET Provider Bookings (Provider)
+router.get("/bookings", protect, async (req, res) => {
+  try {
+    if (req.user.role !== "provider") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Provider role required.",
+      });
+    }
+
+    const Booking = require("../../models/booking.models");
+    const bookings = await Booking.find({ provider: req.user.id })
+      .populate("customer", "firstName lastName email")
+      .populate("category", "name")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      bookings,
+    });
+  } catch (err) {
+    console.error("Error fetching provider bookings:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
 
 module.exports = router;

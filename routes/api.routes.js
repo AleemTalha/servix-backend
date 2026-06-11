@@ -11,6 +11,8 @@ router.use("/profile", require("./user/profile.routes"));
 router.use("/notifications", require("./user/notification.routes"));
 router.use("/chat", require("./user/chat.routes"));
 router.use("/dashboard", require("./user/dashboard.routes"));
+router.use("/users", require("./user/user.routes"));
+router.use("/bookings", require("./user/booking.routes"));
 
 router.post("/test-notification", async (req, res) => {
   try {

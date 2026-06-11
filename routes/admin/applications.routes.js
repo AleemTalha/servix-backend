@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const Application = require("../../models/application.model");
 const User = require("../../models/user.models");
+const Category = require("../../models/category.models");
+const Notification = require("../../models/notification.models");
 const admin = require("../../config/firebase");
 
 const sendNotification = async (tokens, title, body) => {
@@ -30,7 +32,7 @@ const sendNotification = async (tokens, title, body) => {
 const removeInvalidTokens = async (userId, tokens) => {
   if (tokens.length > 0) {
     await User.findByIdAndUpdate(userId, {
-      $pull: { fcmTokens: { $in: tokens } },
+      $pull: { fcmToken: { $in: tokens } },
     });
   }
 };
@@ -46,31 +48,72 @@ router.patch("/:id/approve", async (req, res) => {
         .json({ message: `Application is already ${app.applicationStatus}` });
     }
 
+    // 1. Update Application Status
     app.applicationStatus = "approved";
     app.reviewedAt = new Date();
     app.reviewedBy = req.user.id;
     if (req.body.adminNotes) app.adminNotes = req.body.adminNotes;
     await app.save();
 
+    // 2. Update User to Provider and Transfer Data
     const user = await User.findById(app.userId);
-    if (user?.fcmTokens?.length) {
-      const invalid = await sendNotification(
-        user.fcmTokens,
-        "Application Approved! 🎉",
-        "Congratulations! You are now a verified service provider on Servix.",
-      );
-      await removeInvalidTokens(user._id, invalid);
+    if (user) {
+      user.role = "provider";
+      
+      // Transfer profile data
+      if (app.providerProfile) {
+        user.providerProfile = {
+          ...user.providerProfile,
+          categories: app.providerProfile.categories || user.providerProfile.categories,
+          bio: app.providerProfile.bio || user.providerProfile.bio,
+          hourlyRate: app.providerProfile.hourlyRate || user.providerProfile.hourlyRate,
+          experienceYears: app.providerProfile.experienceYears || user.providerProfile.experienceYears,
+          location: app.providerProfile.location || user.providerProfile.location,
+          isAvailable: app.providerProfile.isAvailable !== undefined ? app.providerProfile.isAvailable : true,
+          verified: true,
+          cnic: {
+            url: app.providerProfile.cnic?.url || user.providerProfile.cnic?.url,
+            publicId: app.providerProfile.cnic?.publicId || user.providerProfile.cnic?.publicId
+          }
+        };
+      }
+
+      // Transfer verification documents
+      if (app.verificationDocuments && app.verificationDocuments.length > 0) {
+        user.verificationDocuments = app.verificationDocuments.map(doc => ({
+          url: doc.url,
+          publicId: doc.publicId,
+          validationDate: new Date()
+        }));
+      }
+      
+      await user.save();
+
+      // 3. Create Database Notification
+      const title = "Application Approved! 🎉";
+      const body = "Congratulations! You are now a verified service provider on Servix.";
+      
+      await Notification.create({
+        title,
+        description: body,
+        recipient: user._id,
+      });
+
+      // 4. Send Push Notification
+      if (user.fcmToken?.length) {
+        const invalid = await sendNotification(user.fcmToken, title, body);
+        await removeInvalidTokens(user._id, invalid);
+      }
     }
 
-    return res
-      .status(200)
-      .json({
-        message: "Application approved and user notified",
-        applicationId: app._id,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "Application approved and user upgraded to provider",
+      applicationId: app._id,
+    });
   } catch (err) {
     console.error("approve error:", err.message);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
@@ -89,6 +132,7 @@ router.patch("/:id/reject", async (req, res) => {
         .json({ message: `Application is already ${app.applicationStatus}` });
     }
 
+    // 1. Update Application Status
     app.applicationStatus = "rejected";
     app.rejectionReason = rejectionReason;
     app.reviewedAt = new Date();
@@ -96,25 +140,32 @@ router.patch("/:id/reject", async (req, res) => {
     if (adminNotes) app.adminNotes = adminNotes;
     await app.save();
 
+    // 2. Notify User
     const user = await User.findById(app.userId);
-    if (user?.fcmTokens?.length) {
-      const invalid = await sendNotification(
-        user.fcmTokens,
-        "Application Update",
-        "Your service provider application was not approved. Open the app to see the reason and resubmit.",
-      );
-      await removeInvalidTokens(user._id, invalid);
+    if (user) {
+      const title = "Application Update";
+      const body = "Your service provider application was not approved. Open the app to see the reason and resubmit.";
+      
+      await Notification.create({
+        title,
+        description: body,
+        recipient: user._id,
+      });
+
+      if (user.fcmToken?.length) {
+        const invalid = await sendNotification(user.fcmToken, title, body);
+        await removeInvalidTokens(user._id, invalid);
+      }
     }
 
-    return res
-      .status(200)
-      .json({
-        message: "Application rejected and user notified",
-        applicationId: app._id,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "Application rejected and user notified",
+      applicationId: app._id,
+    });
   } catch (err) {
     console.error("reject error:", err.message);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
@@ -126,9 +177,9 @@ router.get("/", async (req, res) => {
 
     const [apps, total] = await Promise.all([
       Application.find(filter)
-        .populate("userId", "name email avatarUrl")
+        .populate("userId", "firstName lastName email profileImage")
         .populate("providerProfile.categories", "name")
-        .populate("reviewedBy", "name email")
+        .populate("reviewedBy", "firstName lastName email")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -136,6 +187,7 @@ router.get("/", async (req, res) => {
     ]);
 
     return res.status(200).json({
+      success: true,
       applications: apps,
       pagination: {
         total,
@@ -146,23 +198,23 @@ router.get("/", async (req, res) => {
     });
   } catch (err) {
     console.error("get applications error:", err.message);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 router.get("/:id", async (req, res) => {
   try {
     const app = await Application.findById(req.params.id)
-      .populate("userId", "name email avatarUrl phone")
-      .populate("providerProfile.categories", "name imageUrl")
-      .populate("reviewedBy", "name email");
+      .populate("userId", "firstName lastName email profileImage contact")
+      .populate("providerProfile.categories", "name image")
+      .populate("reviewedBy", "firstName lastName email");
 
     if (!app) return res.status(404).json({ message: "Application not found" });
 
-    return res.status(200).json({ application: app });
+    return res.status(200).json({ success: true, application: app });
   } catch (err) {
     console.error("get application error:", err.message);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 

@@ -1,6 +1,41 @@
 const router = require("express").Router();
 const User = require("../../models/user.models");
 const Application = require("../../models/application.model");
+const Category = require("../../models/category.models");
+const Notification = require("../../models/notification.models");
+const admin = require("../../config/firebase");
+
+const sendNotification = async (tokens, title, body) => {
+  if (!tokens?.length) return [];
+  try {
+    const res = await admin.messaging().sendEachForMulticast({
+      notification: { title, body },
+      tokens,
+    });
+    return res.responses
+      .map((r, i) =>
+        !r.success &&
+        [
+          "messaging/invalid-registration-token",
+          "messaging/registration-token-not-registered",
+        ].includes(r.error?.code)
+          ? tokens[i]
+          : null,
+      )
+      .filter(Boolean);
+  } catch (err) {
+    console.error("sendNotification error:", err.message);
+    return [];
+  }
+};
+
+const removeInvalidTokens = async (userId, tokens) => {
+  if (tokens.length > 0) {
+    await User.findByIdAndUpdate(userId, {
+      $pull: { fcmToken: { $in: tokens } },
+    });
+  }
+};
 
 // ✨ GET all pending provider applications
 router.get(
@@ -11,14 +46,11 @@ router.get(
       const limit = parseInt(req.query.limit) || 10;
       const skip = (page - 1) * limit;
 
-      console.log("========== FETCH PENDING APPLICATIONS START ==========");
-      console.log("Page:", page, "Limit:", limit);
-
       const applications = await Application.find({
         applicationStatus: "pending",
         applicationType: "provider",
       })
-        .populate("userId", "firstName lastName email phone")
+        .populate("userId", "firstName lastName email contact profileImage")
         .populate("providerProfile.categories", "name")
         .sort({ submittedAt: -1 })
         .skip(skip)
@@ -28,10 +60,6 @@ router.get(
         applicationStatus: "pending",
         applicationType: "provider",
       });
-
-      console.log("Applications found:", applications.length);
-      console.log("Total:", total);
-      console.log("========== FETCH PENDING APPLICATIONS END ==========");
 
       return res.status(200).json({
         applications,
@@ -44,10 +72,7 @@ router.get(
       });
     } catch (err) {
       console.error("Error fetching applications:", err.message);
-      return res.status(500).json({
-        message: "Internal Server Error",
-        error: process.env.NODE_ENV === "development" ? err.message : undefined,
-      });
+      return res.status(500).json({ message: "Internal Server Error" });
     }
   }
 );
@@ -59,29 +84,19 @@ router.get(
     try {
       const { applicationId } = req.params;
 
-      console.log("========== FETCH APPLICATION DETAILS START ==========");
-      console.log("Application ID:", applicationId);
-
       const application = await Application.findById(applicationId)
-        .populate("userId", "firstName lastName email phone role")
-        .populate("providerProfile.categories", "name")
+        .populate("userId", "firstName lastName email contact profileImage role")
+        .populate("providerProfile.categories", "name image")
         .populate("reviewedBy", "firstName lastName email");
 
       if (!application) {
-        console.warn("Application not found:", applicationId);
         return res.status(404).json({ message: "Application not found" });
       }
-
-      console.log("Application details retrieved");
-      console.log("========== FETCH APPLICATION DETAILS END ==========");
 
       return res.status(200).json(application);
     } catch (err) {
       console.error("Error fetching application:", err.message);
-      return res.status(500).json({
-        message: "Internal Server Error",
-        error: process.env.NODE_ENV === "development" ? err.message : undefined,
-      });
+      return res.status(500).json({ message: "Internal Server Error" });
     }
   }
 );
@@ -95,65 +110,76 @@ router.post(
       const { adminNotes } = req.body;
       const adminId = req.user.id;
 
-      console.log("========== APPROVE APPLICATION START ==========");
-      console.log("Application ID:", applicationId);
-      console.log("Admin ID:", adminId);
-
       const application = await Application.findById(applicationId);
 
       if (!application) {
-        console.warn("Application not found:", applicationId);
         return res.status(404).json({ message: "Application not found" });
       }
 
-      if (application.applicationStatus !== "pending") {
-        console.warn("Application already reviewed:", {
-          applicationId,
-          status: application.applicationStatus,
-        });
-
+      if (!["pending", "resubmitted"].includes(application.applicationStatus)) {
         return res.status(400).json({
           message: `Cannot approve. Application status is ${application.applicationStatus}`,
         });
       }
 
-      // Update application
+      // 1. Update Application
       application.applicationStatus = "approved";
       application.reviewedBy = adminId;
       application.reviewedAt = new Date();
       if (adminNotes) {
         application.adminNotes = adminNotes;
       }
-
       await application.save();
 
-      // Update user role to provider
+      // 2. Update User to Provider
       const user = await User.findById(application.userId);
       if (user) {
         user.role = "provider";
 
-        // ✨ Transfer provider profile data from application to user
+        // Transfer provider profile data from application to user
         if (application.providerProfile) {
           user.providerProfile = {
-            categories: application.providerProfile.categories,
-            bio: application.providerProfile.bio,
-            hourlyRate: application.providerProfile.hourlyRate,
-            experienceYears: application.providerProfile.experienceYears,
-            location: application.providerProfile.location,
-            isAvailable: application.providerProfile.isAvailable,
+            ...user.providerProfile,
+            categories: application.providerProfile.categories || user.providerProfile.categories,
+            bio: application.providerProfile.bio || user.providerProfile.bio,
+            hourlyRate: application.providerProfile.hourlyRate || user.providerProfile.hourlyRate,
+            experienceYears: application.providerProfile.experienceYears || user.providerProfile.experienceYears,
+            location: application.providerProfile.location || user.providerProfile.location,
+            isAvailable: application.providerProfile.isAvailable ?? true,
             verified: true,
-            totalRating: 0,
-            totalReviews: 0,
-            jobsCompleted: 0,
+            cnic: {
+              url: application.providerProfile.cnic?.url || user.providerProfile.cnic?.url,
+              publicId: application.providerProfile.cnic?.publicId || user.providerProfile.cnic?.publicId
+            }
           };
         }
 
-        await user.save();
-      }
+        // Transfer verification documents
+        if (application.verificationDocuments && application.verificationDocuments.length > 0) {
+          user.verificationDocuments = application.verificationDocuments.map(doc => ({
+            url: doc.url,
+            publicId: doc.publicId,
+            validationDate: new Date()
+          }));
+        }
 
-      console.log("Application approved successfully");
-      console.log("User role updated to provider");
-      console.log("========== APPROVE APPLICATION END ==========");
+        await user.save();
+
+        // 3. Notify User
+        const title = "Application Approved! 🎉";
+        const body = "Congratulations! You are now a verified service provider on Servix.";
+        
+        await Notification.create({
+          title,
+          description: body,
+          recipient: user._id,
+        });
+
+        if (user.fcmToken?.length) {
+          const invalid = await sendNotification(user.fcmToken, title, body);
+          await removeInvalidTokens(user._id, invalid);
+        }
+      }
 
       return res.status(200).json({
         message: "Application approved successfully",
@@ -161,10 +187,7 @@ router.post(
       });
     } catch (err) {
       console.error("Error approving application:", err.message);
-      return res.status(500).json({
-        message: "Internal Server Error",
-        error: process.env.NODE_ENV === "development" ? err.message : undefined,
-      });
+      return res.status(500).json({ message: "Internal Server Error" });
     }
   }
 );
@@ -179,35 +202,22 @@ router.post(
       const adminId = req.user.id;
 
       if (!rejectionReason || rejectionReason.trim().length === 0) {
-        return res.status(400).json({
-          message: "Rejection reason is required",
-        });
+        return res.status(400).json({ message: "Rejection reason is required" });
       }
-
-      console.log("========== REJECT APPLICATION START ==========");
-      console.log("Application ID:", applicationId);
-      console.log("Admin ID:", adminId);
-      console.log("Reason:", rejectionReason);
 
       const application = await Application.findById(applicationId);
 
       if (!application) {
-        console.warn("Application not found:", applicationId);
         return res.status(404).json({ message: "Application not found" });
       }
 
-      if (application.applicationStatus !== "pending") {
-        console.warn("Application already reviewed:", {
-          applicationId,
-          status: application.applicationStatus,
-        });
-
+      if (!["pending", "resubmitted"].includes(application.applicationStatus)) {
         return res.status(400).json({
           message: `Cannot reject. Application status is ${application.applicationStatus}`,
         });
       }
 
-      // Update application
+      // 1. Update Application
       application.applicationStatus = "rejected";
       application.reviewedBy = adminId;
       application.reviewedAt = new Date();
@@ -215,11 +225,25 @@ router.post(
       if (adminNotes) {
         application.adminNotes = adminNotes;
       }
-
       await application.save();
 
-      console.log("Application rejected successfully");
-      console.log("========== REJECT APPLICATION END ==========");
+      // 2. Notify User
+      const user = await User.findById(application.userId);
+      if (user) {
+        const title = "Application Update";
+        const body = "Your service provider application was not approved. Open the app to see the reason and resubmit.";
+        
+        await Notification.create({
+          title,
+          description: body,
+          recipient: user._id,
+        });
+
+        if (user.fcmToken?.length) {
+          const invalid = await sendNotification(user.fcmToken, title, body);
+          await removeInvalidTokens(user._id, invalid);
+        }
+      }
 
       return res.status(200).json({
         message: "Application rejected successfully",
@@ -227,10 +251,7 @@ router.post(
       });
     } catch (err) {
       console.error("Error rejecting application:", err.message);
-      return res.status(500).json({
-        message: "Internal Server Error",
-        error: process.env.NODE_ENV === "development" ? err.message : undefined,
-      });
+      return res.status(500).json({ message: "Internal Server Error" });
     }
   }
 );
@@ -241,27 +262,19 @@ router.get("/applications", async (req, res) => {
     const { status, page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
 
-    console.log("========== FETCH ALL APPLICATIONS START ==========");
-    console.log("Status filter:", status);
-    console.log("Page:", page, "Limit:", limit);
-
     const query = { applicationType: "provider" };
     if (status) {
       query.applicationStatus = status;
     }
 
     const applications = await Application.find(query)
-      .populate("userId", "firstName lastName email phone role")
+      .populate("userId", "firstName lastName email contact profileImage role")
       .populate("reviewedBy", "firstName lastName email")
       .sort({ submittedAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
     const total = await Application.countDocuments(query);
-
-    console.log("Applications found:", applications.length);
-    console.log("Total:", total);
-    console.log("========== FETCH ALL APPLICATIONS END ==========");
 
     return res.status(200).json({
       applications,
@@ -274,10 +287,7 @@ router.get("/applications", async (req, res) => {
     });
   } catch (err) {
     console.error("Error fetching applications:", err.message);
-    return res.status(500).json({
-      message: "Internal Server Error",
-      error: process.env.NODE_ENV === "development" ? err.message : undefined,
-    });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
